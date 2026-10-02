@@ -10,6 +10,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from apps.core.response import success_response, error_response
+from apps.idempotency.mixins import IdempotentMixin
 from .models import Unit, Category, Variety, Goods, StockIn, StockOut, Warning, Approval
 from .serializers import (
     UnitSerializer, UnitCreateSerializer,
@@ -24,9 +25,10 @@ logger = logging.getLogger('apps')
 
 # ==================== 单位管理 ====================
 
-class UnitListView(APIView):
+class UnitListView(IdempotentMixin, APIView):
     """单位列表视图"""
     permission_classes = [IsAuthenticated]
+    idempotency_domain = 'warehouse.units.create'
     
     def get(self, request):
         queryset = Unit.objects.all().order_by('-created_at')
@@ -142,9 +144,10 @@ class UnitAllView(APIView):
 
 # ==================== 品类管理 ====================
 
-class CategoryListView(APIView):
+class CategoryListView(IdempotentMixin, APIView):
     """品类列表视图"""
     permission_classes = [IsAuthenticated]
+    idempotency_domain = 'warehouse.categories.create'
     
     def get(self, request):
         queryset = Category.objects.all().order_by('-created_at')
@@ -262,9 +265,10 @@ class CategoryAllView(APIView):
 
 # ==================== 品种管理 ====================
 
-class VarietyListView(APIView):
+class VarietyListView(IdempotentMixin, APIView):
     """品种列表视图"""
     permission_classes = [IsAuthenticated]
+    idempotency_domain = 'warehouse.varieties.create'
     
     def get(self, request):
         queryset = Variety.objects.all().order_by('-created_at')
@@ -460,10 +464,11 @@ class VarietyTemplateView(APIView):
         return response
 
 
-class VarietyImportView(APIView):
+class VarietyImportView(IdempotentMixin, APIView):
     """品种导入视图"""
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    idempotency_domain = 'warehouse.varieties.import'
     
     def post(self, request):
         if 'file' not in request.FILES:

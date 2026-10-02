@@ -14,6 +14,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "django_filters",
     "apps.authentication",
+    "apps.idempotency",
     "apps.warehouse",
     "apps.personnel",
     "apps.reports",
@@ -60,6 +61,10 @@ REST_FRAMEWORK = {
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "local-custody-jwt-key")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_DELTA = timedelta(hours=24)
+# 幂等凭证有效期（小时），过期后凭证可按全新请求复用
+IDEMPOTENCY_KEY_TTL_HOURS = int(os.environ.get("IDEMPOTENCY_KEY_TTL_HOURS", "24"))
+# 处理中租约（秒），超时视为上次执行中断（如服务重启），允许重新执行
+IDEMPOTENCY_PROCESSING_LEASE_SECONDS = int(os.environ.get("IDEMPOTENCY_PROCESSING_LEASE_SECONDS", "120"))
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 LOGS_DIR = BASE_DIR / "logs"

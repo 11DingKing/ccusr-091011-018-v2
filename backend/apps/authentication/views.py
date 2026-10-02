@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.core.response import success_response, error_response
+from apps.idempotency.mixins import IdempotentMixin
 from .models import User, OperationLog
 from .serializers import LoginSerializer, UserSerializer, OperationLogSerializer, UserCreateSerializer
 from .backends import generate_token
@@ -73,9 +74,10 @@ class UserInfoView(APIView):
         return success_response(data=serializer.data)
 
 
-class UserListView(APIView):
+class UserListView(IdempotentMixin, APIView):
     """用户列表视图 - 考勤人员管理"""
     permission_classes = [IsAuthenticated]
+    idempotency_domain = 'authentication.users.create'
     
     def get(self, request):
         # 只有管理员可以访问
