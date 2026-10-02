@@ -3,6 +3,9 @@
 """
 import logging
 import io
+from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
 from django.http import HttpResponse
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -10,12 +13,14 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from apps.core.response import success_response, error_response
+from apps.core.idempotency import idempotent
 from .models import Unit, Category, Variety, Goods, StockIn, StockOut, Warning, Approval
 from .serializers import (
     UnitSerializer, UnitCreateSerializer,
     CategorySerializer, CategoryCreateSerializer,
     VarietySerializer, VarietyCreateSerializer,
-    GoodsSerializer, StockInSerializer, StockOutSerializer,
+    GoodsSerializer, StockInSerializer, StockInCreateSerializer,
+    StockOutSerializer, StockOutCreateSerializer,
     WarningSerializer, ApprovalSerializer
 )
 
@@ -587,29 +592,130 @@ class GoodsListView(APIView):
 
 
 class StockInListView(APIView):
-    """入库记录列表视图"""
+    """收件（入库）记录列表 / 提交收件请求"""
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
+        queryset = StockIn.objects.select_related('goods', 'operator').all().order_by(
+            '-stock_in_time'
+        )
+        goods_id = request.query_params.get('goods')
+        if goods_id:
+            queryset = queryset.filter(goods_id=goods_id)
+
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        total = queryset.count()
+        records = queryset[start:end]
+
         return success_response(data={
-            'list': [],
-            'total': 0,
-            'page': 1,
-            'page_size': 10
+            'list': StockInSerializer(records, many=True).data,
+            'total': total,
+            'page': page,
+            'page_size': page_size
         })
+
+    @idempotent(scope='stock-in')
+    def post(self, request):
+        """提交收件请求（携带 Idempotency-Key 时启用幂等）"""
+        serializer = StockInCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            errors = serializer.errors
+            first_error = list(errors.values())[0]
+            if isinstance(first_error, list):
+                first_error = first_error[0]
+            # 业务拒绝：结论确定，会被幂等层缓存并在重放时原样返回。
+            return error_response(message=str(first_error))
+
+        data = serializer.validated_data
+        with transaction.atomic():
+            goods = Goods.objects.select_for_update().get(pk=data['goods'])
+            record = StockIn.objects.create(
+                goods=goods,
+                operator=request.user,
+                quantity=data['quantity'],
+                batch_no=data.get('batch_no', ''),
+                supplier=data.get('supplier', ''),
+                remark=data.get('remark', ''),
+            )
+            goods.quantity = F('quantity') + data['quantity']
+            goods.save(update_fields=['quantity', 'updated_at'])
+
+        logger.info(
+            "User %s stocked in goods %s quantity %s",
+            request.user.username, goods.id, data['quantity'],
+        )
+        return success_response(data=StockInSerializer(record).data, message='收件成功')
 
 
 class StockOutListView(APIView):
-    """出库记录列表视图"""
+    """放行（出库）记录列表 / 提交放行请求"""
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
+        queryset = StockOut.objects.select_related('goods', 'operator').all().order_by(
+            '-created_at'
+        )
+        goods_id = request.query_params.get('goods')
+        if goods_id:
+            queryset = queryset.filter(goods_id=goods_id)
+
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        total = queryset.count()
+        records = queryset[start:end]
+
         return success_response(data={
-            'list': [],
-            'total': 0,
-            'page': 1,
-            'page_size': 10
+            'list': StockOutSerializer(records, many=True).data,
+            'total': total,
+            'page': page,
+            'page_size': page_size
         })
+
+    @idempotent(scope='stock-out')
+    def post(self, request):
+        """提交放行请求（携带 Idempotency-Key 时启用幂等）"""
+        serializer = StockOutCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            errors = serializer.errors
+            first_error = list(errors.values())[0]
+            if isinstance(first_error, list):
+                first_error = first_error[0]
+            return error_response(message=str(first_error))
+
+        data = serializer.validated_data
+        quantity = data['quantity']
+        with transaction.atomic():
+            goods = Goods.objects.select_for_update().get(pk=data['goods'])
+            if goods.quantity < quantity:
+                # 库存不足属于业务拒绝，不产生任何业务记录，重放时仍返回该拒绝。
+                return error_response(
+                    message=f'库存不足，当前库存 {goods.quantity}，无法放行 {quantity}'
+                )
+            record = StockOut.objects.create(
+                goods=goods,
+                operator=request.user,
+                receiver=data['receiver'],
+                receiver_dept=data.get('receiver_dept', ''),
+                quantity=quantity,
+                status='completed',
+                stock_out_time=timezone.now(),
+                remark=data.get('remark', ''),
+            )
+            goods.quantity = F('quantity') - quantity
+            goods.save(update_fields=['quantity', 'updated_at'])
+
+        logger.info(
+            "User %s stocked out goods %s quantity %s",
+            request.user.username, goods.id, quantity,
+        )
+        return success_response(data=StockOutSerializer(record).data, message='放行成功')
 
 
 class WarningListView(APIView):

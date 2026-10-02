@@ -13,6 +13,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "rest_framework",
     "django_filters",
+    "apps.core",
     "apps.authentication",
     "apps.warehouse",
     "apps.personnel",
@@ -36,6 +37,9 @@ DATABASES = {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": os.environ.get("SQLITE_PATH", str(BASE_DIR / "db.sqlite3")),
         "OPTIONS": {"timeout": 20},
+        # 测试库使用独立文件：内存共享缓存模式下多线程写会立即报
+        # “database table is locked”，无法真实模拟并发写竞争。
+        "TEST": {"NAME": os.environ.get("SQLITE_TEST_PATH", str(BASE_DIR / "test_db.sqlite3"))},
     }
 }
 AUTH_PASSWORD_VALIDATORS = []
@@ -60,6 +64,12 @@ REST_FRAMEWORK = {
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "local-custody-jwt-key")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_DELTA = timedelta(hours=24)
+# 幂等凭证保留期：期内同凭证请求按重放/冲突处理；过期返回 410。
+IDEMPOTENCY_KEY_TTL_HOURS = int(os.environ.get("IDEMPOTENCY_KEY_TTL_HOURS", "72"))
+# 处理中凭证的锁超时：超过仍停留在 processing 视为崩溃残留，拒绝自动重放。
+IDEMPOTENCY_LOCK_TIMEOUT_SECONDS = int(
+    os.environ.get("IDEMPOTENCY_LOCK_TIMEOUT_SECONDS", "30")
+)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 LOGS_DIR = BASE_DIR / "logs"

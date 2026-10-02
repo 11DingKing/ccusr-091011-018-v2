@@ -1,6 +1,7 @@
 """
 仓库管理序列化器
 """
+from decimal import Decimal
 from rest_framework import serializers
 from .models import Unit, Category, Variety, Goods, StockIn, StockOut, Warning, Approval
 
@@ -152,13 +153,65 @@ class StockInSerializer(serializers.ModelSerializer):
     """入库记录序列化器"""
     goods_name = serializers.CharField(source='goods.name', read_only=True)
     operator_name = serializers.CharField(source='operator.username', read_only=True)
-    
+
     class Meta:
         model = StockIn
         fields = [
             'id', 'goods', 'goods_name', 'operator', 'operator_name',
             'quantity', 'batch_no', 'supplier', 'stock_in_time', 'remark'
         ]
+
+
+class StockInCreateSerializer(serializers.Serializer):
+    """收件（入库）请求载荷校验"""
+    goods = serializers.IntegerField(required=True, error_messages={
+        'required': '请选择货物',
+    })
+    quantity = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=Decimal('0.01'),
+        error_messages={
+            'required': '请输入收件数量',
+            'invalid': '收件数量格式不正确',
+            'min_value': '收件数量必须大于0',
+        },
+    )
+    batch_no = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+    supplier = serializers.CharField(max_length=200, required=False, allow_blank=True, default='')
+    remark = serializers.CharField(max_length=2000, required=False, allow_blank=True, default='')
+
+    def validate_goods(self, value):
+        if not Goods.objects.filter(pk=value, is_active=True).exists():
+            raise serializers.ValidationError('货物不存在或已停用')
+        return value
+
+
+class StockOutCreateSerializer(serializers.Serializer):
+    """放行（出库）请求载荷校验"""
+    goods = serializers.IntegerField(required=True, error_messages={
+        'required': '请选择货物',
+    })
+    receiver = serializers.CharField(min_length=1, max_length=100, error_messages={
+        'required': '请输入领用人',
+        'blank': '领用人不能为空',
+        'max_length': '领用人最多100个字',
+    })
+    receiver_dept = serializers.CharField(
+        max_length=100, required=False, allow_blank=True, default=''
+    )
+    quantity = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=Decimal('0.01'),
+        error_messages={
+            'required': '请输入放行数量',
+            'invalid': '放行数量格式不正确',
+            'min_value': '放行数量必须大于0',
+        },
+    )
+    remark = serializers.CharField(max_length=2000, required=False, allow_blank=True, default='')
+
+    def validate_goods(self, value):
+        if not Goods.objects.filter(pk=value, is_active=True).exists():
+            raise serializers.ValidationError('货物不存在或已停用')
+        return value
 
 
 class StockOutSerializer(serializers.ModelSerializer):
